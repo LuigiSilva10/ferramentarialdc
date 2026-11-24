@@ -368,7 +368,7 @@
                             <span class="sidebar-text">Operações</span>
                             <span id="actionsOverdueBadge" class="hidden absolute top-3 right-3 w-2 h-2 bg-rose-500 rounded-full"></span>
                         </button>
-                        <button id="btn-maintenance" onclick="handleNavClick('maintenance')" class="nav-btn"><i data-lucide="wrench"></i> <span class="sidebar-text">FollowUp</span></button>
+                        <button id="btn-maintenance" onclick="handleNavClick('maintenance')" class="nav-btn"><i data-lucide="wrench"></i> <span class="sidebar-text">Manutenção</span></button>
                     </section>
 
                     <section class="sidebar-section" aria-label="Inventário">
@@ -380,7 +380,7 @@
 
                     <section class="sidebar-section" aria-label="Análise e Compras">
                         <div class="sidebar-label">Análise e Compras</div>
-                        <button id="btn-dashboard" onclick="handleNavClick('dashboard')" class="nav-btn"><i data-lucide="trending-up"></i> <span class="sidebar-text">Dashboard</span></button>
+                        <button id="btn-dashboard" onclick="handleNavClick('dashboard')" class="nav-btn"><i data-lucide="trending-up"></i> <span class="sidebar-text">Painel</span></button>
                         <button id="btn-shopping" onclick="handleNavClick('shopping')" class="nav-btn"><i data-lucide="shopping-cart"></i> <span class="sidebar-text">Lista de Compras</span></button>
                         <button id="btn-suggestions" onclick="handleNavClick('suggestions')" class="nav-btn"><i data-lucide="lightbulb"></i> <span class="sidebar-text">Sugestões</span></button>
                     </section>
@@ -470,7 +470,7 @@
                                 <i data-lucide="trending-up" size="28"></i>
                             </div>
                             <div>
-                                <h2 class="text-xl sm:text-2xl md:text-3xl font-black text-white uppercase tracking-tighter leading-none">Dashboard de Fluxo</h2>
+                                <h2 class="text-xl sm:text-2xl md:text-3xl font-black text-white uppercase tracking-tighter leading-none">Painel de Fluxo</h2>
                                 <p class="text-slate-400 text-sm font-medium mt-1">Análise inteligente de movimentação e ativos</p>
                             </div>
                         </div>
@@ -1161,7 +1161,7 @@
                                     <div class="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                                         <div>
                                             <h4 class="font-bold text-slate-700 text-sm">Notificações Pop-up</h4>
-                                            <p class="text-xs text-slate-400 font-bold uppercase">Toasts de confirmação</p>
+                                            <p class="text-xs text-slate-400 font-bold uppercase">Avisos de confirmação</p>
                                         </div>
                                         <label class="relative inline-flex items-center cursor-pointer">
                                             <input type="checkbox" id="settingShowToasts" onchange="saveSettings()" class="sr-only peer">
@@ -1959,6 +1959,28 @@
                         return statementResults.map(result => result?.response?.result);
                     }
                 };
+
+                let cloudDatabaseInitialized = false;
+
+                function setDatabaseStatus(status, isError = false) {
+                    const badge = document.getElementById('dbStatusBadge');
+                    if (!badge) return;
+                    badge.innerText = status;
+                    badge.className = `text-[10px] font-bold uppercase ${isError ? 'text-rose-600' : 'text-emerald-600'}`;
+                }
+
+                async function initializeCloudDatabase() {
+                    if (cloudDatabaseInitialized) return;
+                    if (!TURSO_URL || !TURSO_TOKEN) throw new Error("Turso não configurado.");
+
+                    await tursoClient.execute([
+                        { sql: "CREATE TABLE IF NOT EXISTS app_storage (key TEXT PRIMARY KEY, value TEXT)" },
+                        { sql: "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)" },
+                        { sql: "CREATE TABLE IF NOT EXISTS employees (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, role TEXT, sector TEXT, photo TEXT, isThirdParty INTEGER DEFAULT 0, companyLogo TEXT, logoSettings TEXT, created_at TEXT)" },
+                        { sql: "INSERT INTO app_storage (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", args: ['_schemaMeta', JSON.stringify({ version: 2, initializedAt: new Date().toISOString() })] }
+                    ]);
+                    cloudDatabaseInitialized = true;
+                }
                 // -------------------------------------
 
                 const isReadOnly = new URLSearchParams(window.location.search).get('mode') === 'readonly';
@@ -2057,6 +2079,7 @@
                     const fetchStart = Date.now(); // Marca o início da requisição
 
                     try {
+                        await initializeCloudDatabase();
                         const results = await tursoClient.execute([{ sql: "SELECT key, value FROM app_storage" }]);
                         if (!results || !Array.isArray(results) || results.length === 0) {
                             return;
@@ -2104,11 +2127,13 @@
                             if (cloudData.shoppingList) shoppingList = Array.isArray(cloudData.shoppingList) ? cloudData.shoppingList : (Array.isArray(shoppingList) ? shoppingList : []);
                             if (cloudData.suggestions) suggestions = Array.isArray(cloudData.suggestions) ? cloudData.suggestions : (Array.isArray(suggestions) ? suggestions : []);
                             if (cloudData.systemConfigs) systemConfigs = cloudData.systemConfigs;
+                            if (cloudData.appSettings) appSettings = cloudData.appSettings;
 
-                            
                             save(false); // Salva localmente e atualiza a tela (false para não reenviar pra nuvem)
+                            setDatabaseStatus("Conectado");
                         }
                     } catch (e) { 
+                        setDatabaseStatus("Erro de conexão", true);
                         // Loga apenas erros que não sejam de conexão/fetch
                         if (e.name !== 'TypeError') console.error("Erro ao carregar da nuvem", e); 
                     }
@@ -2545,6 +2570,7 @@
                         if (syncToCloud && TURSO_URL && !TURSO_URL.includes("seu-banco-nome-usuario") &&
                             TURSO_TOKEN && !TURSO_TOKEN.includes("SEU_TOKEN_AQUI")) {
                             try {
+                                await initializeCloudDatabase();
                                 const sqlUpsert = "INSERT INTO app_storage (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value";
                                 await tursoClient.execute([
                                     { sql: sqlUpsert, args: ['tools', JSON.stringify(toolsForStorage)] },
@@ -2552,11 +2578,15 @@
                                     { sql: sqlUpsert, args: ['history', JSON.stringify(historyForStorage)] },
                                     { sql: sqlUpsert, args: ['shoppingList', JSON.stringify(shoppingList)] },
                                     { sql: sqlUpsert, args: ['suggestions', JSON.stringify(suggestions)] },
-                                    { sql: sqlUpsert, args: ['systemConfigs', JSON.stringify(systemConfigs)] }
+                                    { sql: sqlUpsert, args: ['systemConfigs', JSON.stringify(systemConfigs)] },
+                                    { sql: sqlUpsert, args: ['appSettings', JSON.stringify(appSettings)] },
+                                    { sql: "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", args: ['systemConfigs', JSON.stringify(systemConfigs)] },
+                                    { sql: "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", args: ['appSettings', JSON.stringify(appSettings)] }
                                 ]);
 
                                 lastCloudSaveTime = Date.now();
                                 hasUnsavedChanges = false;
+                                setDatabaseStatus("Sincronizado");
                             } catch (e) {
                                 cloudSaveSucceeded = false;
                                 console.error("Erro ao sincronizar com o Turso:", e);
@@ -6038,7 +6068,7 @@
                         [5], // Custo é moeda
                         [1, 7] // Código e Data centralizados
                     );
-                    XLSX.utils.book_append_sheet(wb, wsMaint, "FollowUp");
+                    XLSX.utils.book_append_sheet(wb, wsMaint, "Manutenção");
 
                     // --- 3. GUIA HISTÓRICO ---
                     const histData = history.sort((a, b) => new Date(b.checkoutDate) - new Date(a.checkoutDate)).map(h => {
@@ -7019,7 +7049,6 @@
 
                 // Inicializa Drag and Drop para Item, Colaborador e Manutenção
                 setupModalDragAndDrop('itemDropZone', 'fileInput', previewImage);
-                setupModalDragAndDrop('workerDropZone', 'workerFileInputModal', previewWorkerImage);
                 setupModalDragAndDrop('maintenanceDropZone', 'maintenanceFileInput', previewMaintenanceImage);
             </script>
         </body>
